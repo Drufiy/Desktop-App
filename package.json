@@ -2,16 +2,18 @@
   "name": "drufiy",
   "version": "0.1.0",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "tauri": "tauri"
+    "electron": "electron .",
+    "electron-dev": "node scripts/dev.js",
+    "electron-pack": "npm run build && electron-builder",
+    "electron-dist": "npm run build && electron-builder --publish=never"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.5.0",
-    "@tauri-apps/cli": "^2.4.1",
     "@hookform/resolvers": "^3.9.1",
     "@radix-ui/react-accordion": "1.2.2",
     "@radix-ui/react-alert-dialog": "1.1.4",
@@ -40,6 +42,7 @@
     "@radix-ui/react-toggle": "1.1.1",
     "@radix-ui/react-toggle-group": "1.1.1",
     "@radix-ui/react-tooltip": "1.1.6",
+    "@tauri-apps/api": "^2.5.0",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -63,11 +66,37 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.7.1",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.0",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
     "postcss": "^8",
     "tailwindcss": "^3.4.17",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^8.0.4"
+  },
+  "build": {
+    "appId": "com.drufiy.app",
+    "productName": "Drufiy",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "out/**/*",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
   }
 }
