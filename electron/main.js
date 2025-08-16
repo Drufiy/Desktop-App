@@ -1,6 +1,7 @@
-const { app, BrowserWindow, Menu } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain } = require('electron');
+const { exec } = require('child_process');
 const path = require('path');
-const isDev = process.env.NODE_ENV === 'development';
+const isDev = (process.env.NODE_ENV === 'development');
 
 function createWindow() {
   // Create the browser window
@@ -117,5 +118,28 @@ app.on('activate', () => {
 app.on('web-contents-created', (event, contents) => {
   contents.on('new-window', (event, navigationUrl) => {
     event.preventDefault();
+  });
+});
+
+// Handle command execution
+ipcMain.handle('execute-command', async (event, command) => {
+  return new Promise((resolve) => {
+    exec(command, { timeout: 30000 }, (error, stdout, stderr) => {
+      if (error) {
+        resolve({
+          success: false,
+          output: stdout || '',
+          error: stderr || error.message,
+          exitCode: error.code
+        });
+      } else {
+        resolve({
+          success: true,
+          output: stdout || '',
+          error: stderr || '',
+          exitCode: 0
+        });
+      }
+    });
   });
 }); 

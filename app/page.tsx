@@ -6,15 +6,19 @@ import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card } from "@/components/ui/card"
-import { Terminal, Send, Cpu, Wifi, Settings, Power } from "lucide-react"
+import { Terminal, Send, Cpu, Wifi, Settings, Power, AlertCircle, CheckCircle } from "lucide-react"
+import { diagnosticAPI, type DiagnoseResponse } from "@/lib/api"
+import { commandExecutor, type CommandResult } from "@/lib/command-executor"
 
 interface Message {
   id: string
-  type: "user" | "ai"
+  type: "user" | "ai" | "system"
   content: string
   timestamp: Date
   formattedTime?: string
-  commands?: string[]
+  command?: string
+  commandResult?: CommandResult
+  isExecuting?: boolean
 }
 
 export default function DrufiyApp() {
@@ -29,7 +33,24 @@ export default function DrufiyApp() {
   ])
   const [input, setInput] = useState("")
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isConnected, setIsConnected] = useState(false)
+  const [currentProblem, setCurrentProblem] = useState<string>("")
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Check API connection on mount
+  useEffect(() => {
+    checkConnection()
+  }, [])
+
+  const checkConnection = async () => {
+    try {
+      await diagnosticAPI.healthCheck()
+      setIsConnected(true)
+    } catch (error) {
+      setIsConnected(false)
+      console.error('Failed to connect to backend:', error)
+    }
+  }
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
@@ -41,7 +62,7 @@ export default function DrufiyApp() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim()) return
+    if (!input.trim() || !isConnected) return
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -55,26 +76,20 @@ export default function DrufiyApp() {
         hour12: false,
       }),
     }
-    
 
     setMessages((prev) => [...prev, userMessage])
+    setCurrentProblem(input)
     setInput("")
     setIsProcessing(true)
 
-    // TODO: Integrate with AI API
-    // const response = await fetch('/api/troubleshoot', {
-    //   method: 'POST',
-    //   headers: { 'Content-Type': 'application/json' },
-    //   body: JSON.stringify({ message: input })
-    // })
-    // const data = await response.json()
-
-    // Simulate AI response with commands
-    setTimeout(() => {
-      const aiMessage: Message = {
+    try {
+      const response = await diagnosticAPI.diagnose(input)
+      await handleDiagnosisResponse(response)
+    } catch (error) {
+      const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
-        type: "ai",
-        content: "I've analyzed your issue. Here are the Windows commands to resolve it:",
+        type: "system",
+        content: `Error connecting to diagnostic service: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: new Date(),
         formattedTime: new Date().toLocaleTimeString("en-US", {
           hour: "2-digit",
@@ -82,23 +97,83 @@ export default function DrufiyApp() {
           second: "2-digit",
           hour12: false,
         }),
-        commands: [
-          "ipconfig /release",
-          "ipconfig /flushdns",
-          "ipconfig /renew",
-          "netsh winsock reset",
-          "netsh int ip reset",
-        ],
       }
-      setMessages((prev) => [...prev, aiMessage])
+      setMessages((prev) => [...prev, errorMessage])
+    } finally {
       setIsProcessing(false)
-    }, 2000)
+    }
   }
 
-  const executeCommand = (command: string) => {
-    // TODO: Integrate with command execution system
-    console.log(`Executing command: ${command}`)
-    // This would interface with the desktop app's command execution module
+  const handleDiagnosisResponse = async (response: DiagnoseResponse) => {
+    const aiMessage: Message = {
+      id: Date.now().toString(),
+      type: "ai",
+      content: response.message,
+      timestamp: new Date(),
+      formattedTime: new Date().toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }),
+      command: response.command,
+    }
+
+    setMessages((prev) => [...prev, aiMessage])
+  }
+
+  const executeCommand = async (messageId: string, command: string) => {
+    // Mark message as executing
+    setMessages((prev) => 
+      prev.map(msg => 
+        msg.id === messageId 
+          ? { ...msg, isExecuting: true }
+          : msg
+      )
+    )
+
+    try {
+      const result = await commandExecutor.executeCommand(command)
+      
+      // Update message with command result
+      setMessages((prev) => 
+        prev.map(msg => 
+          msg.id === messageId 
+            ? { ...msg, isExecuting: false, commandResult: result }
+            : msg
+        )
+      )
+
+      // If command was successful and we have output, send it back to the AI
+      if (result.success && result.output && currentProblem) {
+        setIsProcessing(true)
+        try {
+          const response = await diagnosticAPI.diagnose(currentProblem, result.output)
+          await handleDiagnosisResponse(response)
+        } catch (error) {
+          console.error('Failed to send command output to AI:', error)
+        } finally {
+          setIsProcessing(false)
+        }
+      }
+    } catch (error) {
+      // Update message with error
+      setMessages((prev) => 
+        prev.map(msg => 
+          msg.id === messageId 
+            ? { 
+                ...msg, 
+                isExecuting: false, 
+                commandResult: {
+                  success: false,
+                  output: '',
+                  error: error instanceof Error ? error.message : 'Unknown error'
+                }
+              }
+            : msg
+        )
+      )
+    }
   }
 
   return (
@@ -121,10 +196,26 @@ export default function DrufiyApp() {
               <h1 className="text-xl font-bold bg-gradient-to-r from-white to-amber-200 bg-clip-text text-transparent">
                 Drufiy
               </h1>
-              <p className="text-xs text-gray-400">AI Windows Troubleshooter</p>
+              <div className="flex items-center space-x-2">
+                <p className="text-xs text-gray-400">AI Windows Troubleshooter</p>
+                <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`} />
+                <span className={`text-xs ${isConnected ? 'text-green-400' : 'text-red-400'}`}>
+                  {isConnected ? 'Connected' : 'Disconnected'}
+                </span>
+              </div>
             </div>
           </div>
           <div className="flex items-center space-x-2">
+            {!isConnected && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={checkConnection}
+                className="text-amber-400 hover:text-white hover:bg-amber-500/10"
+              >
+                Reconnect
+              </Button>
+            )}
             <Button variant="ghost" size="sm" className="text-gray-400 hover:text-white hover:bg-amber-500/10">
               <Settings className="w-4 h-4" />
             </Button>
@@ -146,6 +237,8 @@ export default function DrufiyApp() {
                   className={`p-4 ${
                     message.type === "user"
                       ? "bg-gradient-to-r from-amber-500/20 to-amber-600/20 border-amber-500/30"
+                      : message.type === "system"
+                      ? "bg-gradient-to-r from-red-800/50 to-red-900/50 border-red-700/50"
                       : "bg-gradient-to-r from-gray-800/50 to-gray-900/50 border-gray-700/50"
                   } backdrop-blur-xl`}
                 >
@@ -155,28 +248,68 @@ export default function DrufiyApp() {
                         <Cpu className="w-4 h-4 text-black" />
                       </div>
                     )}
+                    {message.type === "system" && (
+                      <div className="w-8 h-8 bg-gradient-to-r from-red-400 to-red-600 rounded-full flex items-center justify-center flex-shrink-0">
+                        <AlertCircle className="w-4 h-4 text-white" />
+                      </div>
+                    )}
                     <div className="flex-1">
                       <p className="text-white leading-relaxed">{message.content}</p>
-                      {message.commands && (
-                        <div className="mt-4 space-y-2">
-                          <p className="text-amber-400 text-sm font-medium">Commands to execute:</p>
-                          {message.commands.map((command, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center justify-between bg-black/30 rounded-lg p-3 border border-amber-500/20"
-                            >
-                              <code className="text-green-400 font-mono text-sm flex-1">{command}</code>
+                      
+                      {message.command && (
+                        <div className="mt-4">
+                          <p className="text-amber-400 text-sm font-medium mb-2">Suggested command:</p>
+                          <div className="bg-black/30 rounded-lg p-3 border border-amber-500/20">
+                            <div className="flex items-center justify-between">
+                              <code className="text-green-400 font-mono text-sm flex-1">{message.command}</code>
                               <Button
                                 size="sm"
-                                onClick={() => executeCommand(command)}
+                                onClick={() => executeCommand(message.id, message.command!)}
+                                disabled={message.isExecuting}
                                 className="ml-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-medium"
                               >
-                                Execute
+                                {message.isExecuting ? 'Executing...' : 'Execute'}
                               </Button>
                             </div>
-                          ))}
+                            
+                            {message.commandResult && (
+                              <div className="mt-3 pt-3 border-t border-gray-600">
+                                <div className="flex items-center space-x-2 mb-2">
+                                  {message.commandResult.success ? (
+                                    <CheckCircle className="w-4 h-4 text-green-400" />
+                                  ) : (
+                                    <AlertCircle className="w-4 h-4 text-red-400" />
+                                  )}
+                                  <span className={`text-sm font-medium ${
+                                    message.commandResult.success ? 'text-green-400' : 'text-red-400'
+                                  }`}>
+                                    {message.commandResult.success ? 'Success' : 'Failed'}
+                                  </span>
+                                </div>
+                                
+                                {message.commandResult.output && (
+                                  <div className="mb-2">
+                                    <p className="text-xs text-gray-400 mb-1">Output:</p>
+                                    <pre className="text-xs text-gray-300 bg-black/20 p-2 rounded overflow-x-auto">
+                                      {message.commandResult.output}
+                                    </pre>
+                                  </div>
+                                )}
+                                
+                                {message.commandResult.error && (
+                                  <div>
+                                    <p className="text-xs text-red-400 mb-1">Error:</p>
+                                    <pre className="text-xs text-red-300 bg-red-900/20 p-2 rounded overflow-x-auto">
+                                      {message.commandResult.error}
+                                    </pre>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
+                      
                       <p className="text-xs text-gray-500 mt-2">{message.formattedTime}</p>
                     </div>
                   </div>
@@ -225,14 +358,17 @@ export default function DrufiyApp() {
             </div>
             <Button
               type="submit"
-              disabled={isProcessing || !input.trim()}
-              className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-medium px-6"
+              disabled={isProcessing || !input.trim() || !isConnected}
+              className="bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-black font-medium px-6 disabled:opacity-50"
             >
               <Send className="w-4 h-4" />
             </Button>
           </form>
           <p className="text-xs text-gray-500 mt-2 text-center">
-            Powered by AI • Commands will be executed with administrator privileges
+            {isConnected 
+              ? "Powered by AI • Commands will be executed with administrator privileges"
+              : "Backend disconnected • Make sure the Python server is running on port 8080"
+            }
           </p>
         </div>
       </div>
