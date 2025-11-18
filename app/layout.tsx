@@ -6,8 +6,8 @@ import "./globals.css"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Druify - AI Windows Troubleshooter",
-  description: "AI-powered Windows troubleshooting desktop application",
+  title: "Glitch - AI Troubleshooting Assistant",
+  description: "AI-powered Windows and development environment troubleshooting application",
     generator: 'v0.dev'
 }
 
@@ -18,7 +18,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className} suppressHydrationWarning>
+        {children}
+      </body>
     </html>
   )
 }
